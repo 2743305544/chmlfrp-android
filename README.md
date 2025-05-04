@@ -1,13 +1,48 @@
-# frp-Android
-A frp client for Android  
-一个Android的frpc客户端
+# CHML FRP Android
+一个Android的frpc客户端，支持CHML FRP隧道配置  
+A frp client for Android with CHML FRP tunnel support
+
+>**遇到一切问题请在chmlfrp官方交流群交流，可以提issue，但更新随缘咯**
+
+同时感谢AceDroidX大佬的开源精神和支持
+
+原项目地址：https://github.com/AceDroidX/frp-Android
+
+主要更改
+- 更改为chmlfrp官方客户端
+- 支持CHML FRP隧道快速命令配置
+- 升级依赖版本
+- 优化后台日志输出
 
 简体中文 | [English](README_en.md)
-
+>如果你想在Windows和Linux上也想快速获取配置文件并启动多个chmlfrp客户端可以尝试这个项目
+> 
+> https://github.com/2743305544/chmlfrp-cli
 <div style="display:inline-block">
-<img src="./image/image1.png" alt="image1.png" width="200">
-<img src="./image/image2.png" alt="image2.png" width="200">
+<img src="./image/chmlfrp.jpg" alt="image1.png" width="200">
 </div>
+
+## 功能特点
+
+- 支持标准frp配置文件
+- 支持CHML FRP隧道配置
+  - 从API获取隧道列表
+  - 一键配置并启动隧道
+  - 支持查看节点信息
+- 支持开机自启动
+- 支持后台运行
+
+## 使用方法
+
+### CHML FRP隧道配置
+
+1. 在主界面点击"CHML FRP设置"卡片
+2. 设置您的Token
+3. 点击"获取隧道列表"按钮
+4. 从列表中选择一个隧道
+5. 点击"选择"按钮启动隧道
+
+### 标准frp配置
 
 ## 编译方法
 

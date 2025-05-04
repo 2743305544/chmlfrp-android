@@ -1,6 +1,6 @@
 <resources>
-    <string name="app_name" translatable="false">frp</string>
-    <string name="frp_for_android" translatable="false">frp for Android</string>
+    <string name="app_name" translatable="false">chmlFrp</string>
+    <string name="frp_for_android" translatable="false">chmlFrp for Android</string>
     <string name="auto_start_switch">Startup at Boot</string>
     <string name="addConfigButton">Add Config</string>
     <string name="aboutButton">About</string>
