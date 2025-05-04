@@ -48,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -64,11 +65,11 @@ import androidx.lifecycle.lifecycleScope
 import io.github.acedroidx.frp.ui.theme.FrpTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import retrofit2.Response
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
 
 class MainActivity : ComponentActivity() {
     private val isStartup = MutableStateFlow(false)
@@ -76,6 +77,12 @@ class MainActivity : ComponentActivity() {
     private val frpcConfigList = MutableStateFlow<List<FrpConfig>>(emptyList())
     private val frpsConfigList = MutableStateFlow<List<FrpConfig>>(emptyList())
     private val runningConfigList = MutableStateFlow<List<FrpConfig>>(emptyList())
+    
+    // CHML FRP相关状态
+    private val chmlFrpToken = MutableStateFlow("")
+    private val tunnelList = MutableStateFlow<List<ChmlFrpConfig>>(emptyList())
+    private val showTokenDialog = mutableStateOf(false)
+    private val showTunnelDialog = mutableStateOf(false)
 
     private lateinit var preferences: SharedPreferences
 
@@ -119,11 +126,17 @@ class MainActivity : ComponentActivity() {
 
         preferences = getSharedPreferences("data", MODE_PRIVATE)
         isStartup.value = preferences.getBoolean(PreferencesKey.AUTO_START, false)
+        
+        // 初始化CHML FRP Token
+        chmlFrpToken.value = PreferencesManager.getToken(this)
 
         checkConfig()
         updateConfigList()
         checkNotificationPermission()
         createBGNotificationChannel()
+
+        val intent = Intent(this, ShellService::class.java)
+        bindService(intent, connection, BIND_AUTO_CREATE)
 
         enableEdgeToEdge()
         setContent {
@@ -133,92 +146,138 @@ class MainActivity : ComponentActivity() {
                         Text("frp for Android - ${BuildConfig.VERSION_NAME}/${BuildConfig.FrpVersion}")
                     })
                 }) { contentPadding ->
-                    // Screen content
-                    Box(
+                    Column(
                         modifier = Modifier
                             .padding(contentPadding)
+                            .fillMaxWidth()
                             .verticalScroll(rememberScrollState())
-                            .scrollable(orientation = Orientation.Vertical,
-                                state = rememberScrollableState { delta -> 0f })
                     ) {
                         MainContent()
                     }
                 }
             }
         }
-
-        if (!mBound) {
-            val intent = Intent(this, ShellService::class.java)
-            bindService(intent, connection, BIND_AUTO_CREATE)
-        }
     }
 
-    @Preview(showBackground = true)
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun MainContent() {
-        val frpcConfigList by frpcConfigList.collectAsStateWithLifecycle(emptyList())
-        val frpsConfigList by frpsConfigList.collectAsStateWithLifecycle(emptyList())
+    private fun MainContent() {
+        val isStartupState by isStartup.collectAsStateWithLifecycle()
+        val logTextState by logText.collectAsStateWithLifecycle()
+        val frpcConfigListState by frpcConfigList.collectAsStateWithLifecycle()
+        val frpsConfigListState by frpsConfigList.collectAsStateWithLifecycle()
+        val runningConfigListState by runningConfigList.collectAsStateWithLifecycle()
+        val chmlFrpTokenState by chmlFrpToken.collectAsStateWithLifecycle()
+        val tunnelsState by tunnelList.collectAsStateWithLifecycle()
+        val showTokenDialogState by showTokenDialog
+        val showTunnelDialogState by showTunnelDialog
+        
+        var showCreateDialog by remember { mutableStateOf(false) }
         val clipboardManager = LocalClipboardManager.current
-        val logText by logText.collectAsStateWithLifecycle("")
         val openDialog = remember { mutableStateOf(false) }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
+                .padding(16.dp)
         ) {
-            if (frpcConfigList.isEmpty() && frpsConfigList.isEmpty()) {
-                Text(
-                    stringResource(R.string.no_config),
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
-                )
+            // 添加CHML FRP设置卡片
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "CHML FRP设置",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    
+                    Spacer(modifier = Modifier.size(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Token: ${if (chmlFrpTokenState.isNotBlank()) "已设置" else "未设置"}")
+                        
+                        Button(onClick = { showTokenDialog.value = true }) {
+                            Text("设置Token")
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.size(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Button(onClick = { fetchTunnels() }) {
+                            Text("获取隧道列表")
+                        }
+                        
+                        Button(onClick = { showTunnelDialog.value = true }) {
+                            Text("选择隧道")
+                        }
+                    }
+                }
             }
-            if (frpcConfigList.isNotEmpty()) {
-                Text("frpc", style = MaterialTheme.typography.titleLarge)
-            }
-            frpcConfigList.forEach { config -> FrpConfigItem(config) }
-            if (frpsConfigList.isNotEmpty()) {
-                Text("frps", style = MaterialTheme.typography.titleLarge)
-            }
-            frpsConfigList.forEach { config -> FrpConfigItem(config) }
-            HorizontalDivider(thickness = 2.dp, modifier = Modifier.padding(vertical = 16.dp))
+            
+            // 自启动开关
             Row(
-                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(stringResource(R.string.auto_start_switch))
-                Switch(checked = isStartup.collectAsStateWithLifecycle(false).value,
+                Switch(checked = isStartupState,
                     onCheckedChange = {
                         val editor = preferences.edit()
                         editor.putBoolean(PreferencesKey.AUTO_START, it)
                         editor.apply()
                         isStartup.value = it
-                    })
+                    }
+                )
             }
+
+            // 配置列表
             Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceAround,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Button(onClick = {
-                    openDialog.value = true
-                }) { Text(stringResource(R.string.addConfigButton)) }
-                Button(onClick = {
-                    startActivity(Intent(this@MainActivity, AboutActivity::class.java))
-                }) { Text(stringResource(R.string.aboutButton)) }
+                Text(stringResource(R.string.no_config))
+                Button(onClick = { openDialog.value = true }) {
+                    Text(stringResource(R.string.addConfigButton))
+                }
             }
-            HorizontalDivider(thickness = 2.dp, modifier = Modifier.padding(vertical = 16.dp))
+            
+            if (frpcConfigListState.isNotEmpty()) {
+                Text("frpc", style = MaterialTheme.typography.titleLarge)
+            }
+            frpcConfigListState.forEach { config -> FrpConfigItem(config) }
+            if (frpsConfigListState.isNotEmpty()) {
+                Text("frps", style = MaterialTheme.typography.titleLarge)
+            }
+            frpsConfigListState.forEach { config -> FrpConfigItem(config) }
+
+            // 日志部分
             Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    stringResource(R.string.frp_log), style = MaterialTheme.typography.titleLarge
+                    stringResource(R.string.frp_log),
+                    modifier = Modifier.weight(1f)
                 )
                 Button(onClick = { mService.clearLog() }) { Text(stringResource(R.string.deleteButton)) }
                 Button(onClick = {
-                    clipboardManager.setText(AnnotatedString(logText))
+                    clipboardManager.setText(AnnotatedString(logTextState))
                     // Only show a toast for Android 12 and lower.
                     if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) Toast.makeText(
                         this@MainActivity, getString(R.string.copied), Toast.LENGTH_SHORT
@@ -227,14 +286,147 @@ class MainActivity : ComponentActivity() {
             }
             SelectionContainer {
                 Text(
-                    if (logText == "") stringResource(R.string.no_log) else logText,
+                    if (logTextState == "") stringResource(R.string.no_log) else logTextState,
                     style = MaterialTheme.typography.bodyMedium.merge(fontFamily = FontFamily.Monospace),
                     modifier = Modifier.padding(vertical = 12.dp)
                 )
             }
         }
+        
+        // 创建配置对话框
         if (openDialog.value) {
             CreateConfigDialog { openDialog.value = false }
+        }
+
+        // CHML FRP Token设置对话框
+        if (showTokenDialogState) {
+            var tokenText by remember { mutableStateOf(chmlFrpTokenState) }
+            
+            BasicAlertDialog(
+                onDismissRequest = { showTokenDialog.value = false }
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "设置CHML FRP Token",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        
+                        Spacer(modifier = Modifier.size(16.dp))
+                        
+                        androidx.compose.material3.TextField(
+                            value = tokenText,
+                            onValueChange = { tokenText = it },
+                            label = { Text("Token") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        
+                        Spacer(modifier = Modifier.size(16.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Button(
+                                onClick = { showTokenDialog.value = false },
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Text("取消")
+                            }
+                            
+                            Button(
+                                onClick = {
+                                    chmlFrpToken.value = tokenText
+                                    PreferencesManager.saveToken(this@MainActivity, tokenText)
+                                    showTokenDialog.value = false
+                                    Toast.makeText(this@MainActivity, "Token已保存", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text("保存")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // CHML FRP隧道选择对话框
+        if (showTunnelDialogState) {
+            BasicAlertDialog(
+                onDismissRequest = { showTunnelDialog.value = false }
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "选择CHML FRP隧道",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        
+                        Spacer(modifier = Modifier.size(16.dp))
+                        
+                        if (tunnelsState.isEmpty()) {
+                            Text("没有可用的隧道，请先获取隧道列表")
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                tunnelsState.forEach { tunnel ->
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = tunnel.name,
+                                            style = MaterialTheme.typography.bodyLarge
+                                        )
+                                        Text(
+                                            text = "ID: ${tunnel.id}, 类型: ${tunnel.type}, 端口: ${tunnel.nport}, 节点: ${tunnel.node}",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Button(
+                                            onClick = {
+                                                executeChmlFrpCommand(tunnel)
+                                                showTunnelDialog.value = false
+                                            },
+                                            modifier = Modifier.align(Alignment.End)
+                                        ) {
+                                            Text("选择")
+                                        }
+                                    }
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.size(16.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Button(
+                                onClick = { showTunnelDialog.value = false }
+                            ) {
+                                Text("取消")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -453,6 +645,218 @@ class MainActivity : ComponentActivity() {
         with(preferences.edit()) {
             putStringSet(PreferencesKey.AUTO_START_FRPS_LIST, frpsAutoStartList?.toSet())
             apply()
+        }
+    }
+
+    // CHML FRP相关方法
+    private fun fetchTunnels() {
+        lifecycleScope.launch {
+            try {
+                val token = chmlFrpToken.value
+                if (token.isBlank()) {
+                    showErrorDialog("错误", "请先设置Token")
+                    return@launch
+                }
+                
+                Toast.makeText(this@MainActivity, "正在获取隧道列表...", Toast.LENGTH_SHORT).show()
+                
+                val response = ChmlFrpApi.create().getTunnels(token)
+                if (response.isSuccessful && response.body() != null) {
+                    val apiResponse = response.body()!!
+                    if (apiResponse.code == 200) {
+                        if (apiResponse.data.isEmpty()) {
+                            showErrorDialog("提示", "获取隧道列表成功，但列表为空")
+                        } else {
+                            tunnelList.value = apiResponse.data
+                            Toast.makeText(this@MainActivity, "获取隧道列表成功，共${apiResponse.data.size}个隧道", Toast.LENGTH_SHORT).show()
+                            // 自动打开隧道选择对话框
+                            showTunnelDialog.value = true
+                        }
+                    } else {
+                        val errorMsg = "获取隧道列表失败: ${apiResponse.msg}"
+                        showErrorDialog("API错误", errorMsg)
+                        Log.e("CHML_FRP", "API错误: ${apiResponse.msg}, 状态码: ${apiResponse.code}")
+                    }
+                } else {
+                    val errorMsg = "网络请求失败: ${response.code()} ${response.message()}"
+                    var detailMsg = ""
+                    if (response.errorBody() != null) {
+                        try {
+                            detailMsg = "\n\n详细信息:\n" + response.errorBody()!!.string()
+                        } catch (e: Exception) {
+                            Log.e("CHML_FRP", "无法读取错误详情: ${e.message}")
+                        }
+                    }
+                    showErrorDialog("网络错误", errorMsg + detailMsg)
+                    Log.e("CHML_FRP", errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = "网络请求异常: ${e.message}"
+                showErrorDialog("网络异常", errorMsg)
+                Log.e("CHML_FRP", errorMsg, e)
+            }
+        }
+    }
+    
+    @OptIn(ExperimentalMaterial3Api::class)
+    private fun showErrorDialog(title: String, message: String) {
+        val showDialog = MutableStateFlow(true)
+        
+        lifecycleScope.launch {
+            setContent {
+                val showDialogState by showDialog.collectAsStateWithLifecycle()
+                
+                if (showDialogState) {
+                    BasicAlertDialog(
+                        onDismissRequest = { 
+                            showDialog.value = false
+                            // 恢复原始UI
+                            setContent {
+                                FrpTheme {
+                                    Scaffold(topBar = {
+                                        TopAppBar(title = {
+                                            Text("frp for Android - ${BuildConfig.VERSION_NAME}/${BuildConfig.FrpVersion}")
+                                        })
+                                    }) { contentPadding ->
+                                        Column(
+                                            modifier = Modifier
+                                                .padding(contentPadding)
+                                                .fillMaxWidth()
+                                                .verticalScroll(rememberScrollState())
+                                        ) {
+                                            MainContent()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                
+                                Spacer(modifier = Modifier.size(16.dp))
+                                
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                
+                                Spacer(modifier = Modifier.size(16.dp))
+                                
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    Button(
+                                        onClick = { 
+                                            showDialog.value = false
+                                            // 恢复原始UI
+                                            setContent {
+                                                FrpTheme {
+                                                    Scaffold(topBar = {
+                                                        TopAppBar(title = {
+                                                            Text("frp for Android - ${BuildConfig.VERSION_NAME}/${BuildConfig.FrpVersion}")
+                                                        })
+                                                    }) { contentPadding ->
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .padding(contentPadding)
+                                                                .fillMaxWidth()
+                                                                .verticalScroll(rememberScrollState())
+                                                        ) {
+                                                            MainContent()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ) {
+                                        Text("确定")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun executeChmlFrpCommand(tunnel: ChmlFrpConfig) {
+        if (!mBound) {
+            Toast.makeText(this, "服务未连接", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        lifecycleScope.launch {
+            try {
+                val token = chmlFrpToken.value
+                if (token.isBlank()) {
+                    showErrorDialog("错误", "请先设置Token")
+                    return@launch
+                }
+                
+                // 获取配置文件内容
+                Toast.makeText(this@MainActivity, "正在获取隧道配置...", Toast.LENGTH_SHORT).show()
+                val response = ChmlFrpApi.createConfigApi().getConfig(tunnel.id, token)
+                
+                if (response.isSuccessful && response.body() != null) {
+                    val configResponse = response.body()!!
+                    if (configResponse.status == 200 && configResponse.success) {
+                        // 保存配置文件
+                        val configContent = configResponse.cfg
+                        
+                        // 确保目录存在
+                        val configDir = File(filesDir, FrpType.FRPC.typeName)
+                        if (!configDir.exists()) {
+                            configDir.mkdirs()
+                        }
+                        
+                        // 保存配置文件到正确的位置
+                        val configFile = File(configDir, "chmlfrp.ini")
+                        configFile.writeText(configContent)
+                        
+                        // 创建frpc配置对象
+                        val config = FrpConfig(
+                            FrpType.FRPC,
+                            "chmlfrp.ini",
+                        )
+                        
+                        // 启动frpc服务
+                        startShell(config)
+                        
+                        // 更新配置列表
+                        updateConfigList()
+                        
+                        Toast.makeText(this@MainActivity, "已启动CHML FRP隧道: ${tunnel.name}", Toast.LENGTH_SHORT).show()
+                    } else {
+                        showErrorDialog("配置获取失败", "API返回错误: ${configResponse.message}")
+                    }
+                } else {
+                    val errorMsg = "获取配置失败: ${response.code()} ${response.message()}"
+                    var detailMsg = ""
+                    if (response.errorBody() != null) {
+                        try {
+                            detailMsg = "\n\n详细信息:\n" + response.errorBody()!!.string()
+                        } catch (e: Exception) {
+                            Log.e("CHML_FRP", "无法读取错误详情: ${e.message}")
+                        }
+                    }
+                    showErrorDialog("网络错误", errorMsg + detailMsg)
+                }
+            } catch (e: Exception) {
+                showErrorDialog("异常", "获取或启动隧道时出错: ${e.message}")
+                Log.e("CHML_FRP", "执行CHML FRP命令异常", e)
+            }
         }
     }
 }
