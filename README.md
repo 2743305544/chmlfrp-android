@@ -19,7 +19,9 @@ A frp client for Android with CHML FRP tunnel support
 > 
 > https://github.com/2743305544/chmlfrp-cli
 <div style="display:inline-block">
-<img src="./image/chmlfrp.jpg" alt="image1.png" width="200">
+<img src="./image/newui.jpg" alt="image1.png" width="200">
+<img src="./image/newui2.jpg" alt="image1.png" width="200">
+<img src="./image/newui3.jpg" alt="image1.png" width="200">
 </div>
 
 ## 功能特点
